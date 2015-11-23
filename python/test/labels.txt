@@ -1,0 +1,2 @@
+img.png 1
+img2.png -1
