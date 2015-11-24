@@ -155,7 +155,7 @@ def createDataset(sources,output,labels,sparse):
     
     output_file.close()
     
-    return 0;
+    return 0
     
 if __name__ == "__main__":
     parser = make_argument_parser()

@@ -8,33 +8,7 @@ import numpy as np
 from PIL import Image, ImageOps, ImageFilter
 #from numpy import dtype
 
-def listFiles(directory, ext=None):
-    """
-    General approach to listing files and getting their full path
-    out argument 1: list of all files with full paths
-    out argument 2: list of all file names (without paths and extensions)
-    """
-    if ext==None:
-        lst = glob.glob(directory)
-    else:
-        lst = glob.glob(directory + '*.' + ext)    
-    
-    print("File list:\n %s"%lst)
-    files = []    
-    
-    # remove all directories
-    for idx in range(len(lst)):
-        if (os.path.isfile(os.path.join(directory,lst[idx]))):
-            files.append(lst[idx])
-    
-    files.sort(); 
-    filenames = []
-    for idx in range(len(files)):
-        filenames.append(os.path.basename(files[idx])); # all file names with extension
-        #filenames.append(os.path.splitext(files[idx])[0])  # all file names (without extension)
-        files[idx] = directory + "/" + files[idx] # prepend the directory
-  
-    return files, filenames
+
 
 
 def createSampleIndex(lbl_image_list, image_names, patch_size=101, extend_border=True):
@@ -196,6 +170,33 @@ def gaussian_blur(image,sigma=0.5):
     im_blurred = image.filter(ImageFilter.GaussianBlur(radius=sigma));
     return im_blurred
     
+def listFiles(directory, ext=None):
+    """
+    General approach to listing files and getting their full path
+    out argument 1: list of all files with full paths
+    out argument 2: list of all file names (without paths and extensions)
+    """
+    if ext==None:
+        lst = glob.glob(directory)
+    else:
+        lst = glob.glob(directory + '*.' + ext)    
+    
+    print("File list:\n %s"%lst)
+    files = []    
+    
+    # remove all directories
+    for idx in range(len(lst)):
+        if (os.path.isfile(os.path.join(directory,lst[idx]))):
+            files.append(lst[idx])
+    
+    files.sort(); 
+    filenames = []
+    for idx in range(len(files)):
+        filenames.append(os.path.basename(files[idx])); # all file names with extension
+        #filenames.append(os.path.splitext(files[idx])[0])  # all file names (without extension)
+        files[idx] = directory + "/" + files[idx] # prepend the directory
+  
+    return files, filenames
     
 def readLabelMap(filepath):
     label_map = {}
