@@ -3,7 +3,7 @@
 Create a (sparse) dataset for libsvm from a set of images.
 
 Test the script with the following terminal command:
-    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse True --resize 20 --scale False
+    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse True --resize 32 --scale True --augment True
 
 Created on Nov 23, 2015
 
@@ -12,6 +12,7 @@ Created on Nov 23, 2015
 
 import sys, os
 from PIL.Image import BILINEAR
+import cv2
 prj_root = os.path.dirname(os.path.abspath(__file__))
 # add root directory to the python path
 sys.path.insert(0, prj_root + '/..')
@@ -45,25 +46,11 @@ def make_argument_parser():
     parser.add_argument('--sparse',
                         default=True,
                         help='Specifies, whether to make sparse libsvm-format')
-    
+    parser.add_argument('--augment',
+                        default=True,
+                        help='Specifies, whether to augment the image data with rotations and mirroring')
     return parser
 
-# which_set = 'rename'
-# patch_size = 101 # input size to the network
-# n_channels = 1 # just coldecon_HE2_R
-# # randomly draw n samples from each of the lists
-# n_samples = 500 # train 5000, test 5000; separators: use n_samples*10 if only rotation: (~40,000 raw)
-# n_classes = 2
-# n_batch_files = 30 # the number of pkl files to split the data into
-# extend_border = True
-# augment_data = True
-# clahe = True
-
-# data augmentation techniques
-#rotation_angles = [i for i in xrange(36,360,36)] # samples are transformed by these rotation angles
-#flip_x = False # data augmentation by flipping around x axis
-#flip_y = False # data augmentation by flipping around y axis
-#flip_xy= False # data augmentation by flipping around x AND y axis
 
 def im2libsvm(image, label):
     """
@@ -84,19 +71,24 @@ def im2libsvm(image, label):
         
     return line
 
+def addSample(src_image, label):
+    """
+    Creates a single line for the dataset.
+    """
+    # scale from 0-255 between 0 and 1
+    if args.scale == True:
+        src_image /= 255.
+    
+    # make the libsvm format
+    line = im2libsvm(src_image, label)
+    return line + "\n"
 
 def processImage(path, label):
     """
     Load the image from the specified path and create the libsvm format.
     """
     src_image_raw = Image.open(path, 'r')
-    #if extend_border:
-        # extend the source image borders
-    #    src_image_raw = utils.extend_image_border(np.asarray(src_image_raw, dtype=np.uint8), (patch_size, patch_size))
         
-    #plt.imshow(src_image_raw)
-    #plt.show()
-    
     # size normalization of the image
     if not (args.resize == None):
         src_image_raw = src_image_raw.resize(size=(int(args.resize), int(args.resize)), resample=BILINEAR)
@@ -105,14 +97,47 @@ def processImage(path, label):
     src_image = np.asarray(src_image_raw, dtype=np.float32)
     src_image.setflags(write=True)
     
-    # scale from 0-255 between 0 and 1
-    if args.scale == True:
-        src_image /= 255.
+    lines = ''
     
-    # make the libsvm format
-    line = im2libsvm(src_image, label)
+    # add the original label
+    lines+=addSample(src_image,label)
     
-    return line
+    if (args.augment):
+        # data augmentation techniques
+        rotation_angles = [i for i in xrange(36,360,36)] # samples are transformed by these rotation angles
+        
+        flip_x = True # data augmentation by flipping around x axis
+        flip_y = True # data augmentation by flipping around y axis
+        flip_xy= True # data augmentation by flipping around x AND y axis
+        
+        for angle in rotation_angles:
+            rot_matrix = cv2.getRotationMatrix2D(
+                                                 (src_image.shape[1]/2.,src_image.shape[0]/2.),
+                                                 angle,
+                                                 1.0)
+            rot_sample_crop = np.array([])
+            rot_sample_crop = cv2.warpAffine(src_image,
+                           rot_matrix,
+                           (src_image.shape[1],src_image.shape[0]),
+                           rot_sample_crop,
+                           cv2.INTER_LINEAR,
+                           cv2.BORDER_REFLECT_101)
+            
+            # add the sample to the dataset
+            lines+=addSample(rot_sample_crop,label)
+            
+            # add 3 flipped copies
+            if flip_x:
+                rot_sample_crop_x = cv2.flip(rot_sample_crop,0)
+                lines+=addSample(rot_sample_crop_x,label)
+            if flip_y:
+                rot_sample_crop_y = cv2.flip(rot_sample_crop,1)
+                lines+=addSample(rot_sample_crop_y,label)
+            if flip_xy:
+                rot_sample_crop_xy = cv2.flip(rot_sample_crop,-1)
+                lines+=addSample(rot_sample_crop_xy,label)
+
+    return lines
 
 
 def createDataset(sources,output,labels,sparse):
@@ -123,15 +148,16 @@ def createDataset(sources,output,labels,sparse):
     [label] [index0:value0] [index1:value1] ... [indexN:valueN]
     
     """
+    out_path = str(output)
     # delete the output file
-    if os.path.exists(os.path.abspath(output)):
-        os.remove(output)
+    if os.path.exists(out_path):
+        os.remove(out_path)
     
     # open the output file
-    output_file = open(output, 'wb')
+    output_file = open(out_path, 'wb')
     
     # first, list the source files
-    fpaths_src, fnames_src = utils.listFiles(sources, 'png')
+    fpaths_src, fnames_src = utils.listFiles(directory=os.path.abspath(sources), ext='png')
     
     # read the label file
     if not (labels == None):
@@ -151,7 +177,7 @@ def createDataset(sources,output,labels,sparse):
             label = np.random.rand()
             
         line = processImage(fpaths_src[img_idx], label)
-        output_file.writelines(line + '\n')
+        output_file.writelines(line)
     
     output_file.close()
     

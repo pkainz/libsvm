@@ -179,7 +179,7 @@ def listFiles(directory, ext=None):
     if ext==None:
         lst = glob.glob(directory)
     else:
-        lst = glob.glob(directory + '*.' + ext)    
+        lst = glob.glob(os.path.join(directory, '*.' + ext))    
     
     print("File list:\n %s"%lst)
     files = []    
@@ -194,7 +194,7 @@ def listFiles(directory, ext=None):
     for idx in range(len(files)):
         filenames.append(os.path.basename(files[idx])); # all file names with extension
         #filenames.append(os.path.splitext(files[idx])[0])  # all file names (without extension)
-        files[idx] = directory + "/" + files[idx] # prepend the directory
+        files[idx] = os.path.join(directory, files[idx]) # prepend the directory
   
     return files, filenames
     
