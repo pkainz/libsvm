@@ -76,7 +76,7 @@ def addSample(src_image, label):
     Creates a single line for the dataset.
     """
     # scale from 0-255 between 0 and 1
-    if args.scale == True:
+    if args.scale:
         src_image /= 255.
     
     # make the libsvm format
@@ -102,7 +102,7 @@ def processImage(path, label):
     # add the original label
     lines+=addSample(src_image,label)
     
-    if (args.augment):
+    if args.augment:
         # data augmentation techniques
         rotation_angles = [i for i in xrange(36,360,36)] # samples are transformed by these rotation angles
         
@@ -163,7 +163,9 @@ def createDataset(sources,output,labels,sparse):
     if not (labels == None):
         label_map = utils.readLabelMap(labels)
         # check that the numbers match
-        assert len(label_map.keys()) == len(fpaths_src)
+        print("Number of images in label map : %s"%str(len(label_map.keys())))
+        print("Number of images in source dir: %s"%str(len(fpaths_src)))
+        assert len(label_map.keys())-1 == len(fpaths_src)
     
     # some dummy label
     label = -99.99
