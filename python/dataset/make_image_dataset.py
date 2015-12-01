@@ -94,7 +94,7 @@ def addSample(src_image, label):
     line = im2libsvm(src_image, label)
     return line + "\n"
 
-def processImage(fpaths_src, labels, label_map, fnames_src, img_idx):
+def processImage(fpaths_src, label_map, fnames_src, img_idx):
     """
     Load the image from the specified path and create the libsvm format.
     """
@@ -116,7 +116,7 @@ def processImage(fpaths_src, labels, label_map, fnames_src, img_idx):
     # some dummy label
     label = -99.99
     # the labels
-    if not (labels == None):
+    if not (label_map == {}):
         label = label_map[fnames_src[img_idx]]
     else:
         # add a dummy label
@@ -188,6 +188,8 @@ def createDataset(sources,output,labels,sparse):
     # first, list the source files
     fpaths_src, fnames_src = utils.listFiles(directory=os.path.abspath(sources), ext='png')
     
+    label_map={}
+    
     # read the label file
     if not (labels == None):
         label_map = utils.readLabelMap(labels)
@@ -195,16 +197,17 @@ def createDataset(sources,output,labels,sparse):
         print("Number of images in label map : %s"%str(len(label_map.keys())-1))
         print("Number of images in source dir: %s"%str(len(fpaths_src)))
         assert len(label_map.keys())-1 == len(fpaths_src)
+        
       
     n_imgs = len(fpaths_src)
     
     # parallel implementation (default, if joblib available)
     if has_joblib:
-        lines_par = Parallel(n_jobs=args.njobs,verbose=5) (delayed(processImage)(fpaths_src, labels, label_map, fnames_src, img_idx) for img_idx in range(n_imgs))
+        lines_par = Parallel(n_jobs=args.njobs,verbose=5) (delayed(processImage)(fpaths_src, label_map, fnames_src, img_idx) for img_idx in range(n_imgs))
         output_file.writelines(lines_par)
     else:
         for img_idx in xrange(n_imgs):
-            line = processImage(fpaths_src, labels, label_map, fnames_src, img_idx)
+            line = processImage(fpaths_src, label_map, fnames_src, img_idx)
             output_file.writelines(line)
         
     output_file.close()
