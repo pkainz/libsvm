@@ -3,7 +3,7 @@
 Create a (sparse) dataset for libsvm from a set of images.
 
 Test the script with the following terminal command:
-    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse True --resize 32 --scale True --augment True
+    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse True --resize 32 --scale True --augment True --njobs
 
 Created on Nov 23, 2015
 
@@ -11,16 +11,23 @@ Created on Nov 23, 2015
 '''
 
 import sys, os
-from PIL.Image import BILINEAR
-import cv2
 prj_root = os.path.dirname(os.path.abspath(__file__))
 # add root directory to the python path
 sys.path.insert(0, prj_root + '/..')
+
+import cv2
+import multiprocessing
 
 from PIL import Image
 from common import utils
 import numpy as np
 import argparse
+try:
+    from joblib import Parallel, delayed
+    has_joblib = True
+except ImportError:
+    print("joblib is not available, running single thread")
+    has_joblib = False
 
 def make_argument_parser():
     """
@@ -49,6 +56,10 @@ def make_argument_parser():
     parser.add_argument('--augment',
                         default=True,
                         help='Specifies, whether to augment the image data with rotations and mirroring')
+    parser.add_argument('--njobs',
+                        default=multiprocessing.cpu_count(),
+                        help='Specifies the number of cpus for multiprocessing')
+    
     return parser
 
 
@@ -83,19 +94,33 @@ def addSample(src_image, label):
     line = im2libsvm(src_image, label)
     return line + "\n"
 
-def processImage(path, label):
+def processImage(fpaths_src, labels, label_map, fnames_src, img_idx):
     """
     Load the image from the specified path and create the libsvm format.
     """
+    global counter
+    n_imgs = len(fpaths_src)
+    print("Processing %s -- %s/%s (%s%%)"%(fnames_src[img_idx],counter,n_imgs,round(100.*counter/n_imgs)))
+    
+    path = fpaths_src[img_idx]
     src_image_raw = Image.open(path, 'r')
         
     # size normalization of the image
     if not (args.resize == None):
-        src_image_raw = src_image_raw.resize(size=(int(args.resize), int(args.resize)), resample=BILINEAR)
+        src_image_raw = src_image_raw.resize(size=(int(args.resize), int(args.resize)), resample=Image.BILINEAR)
     
     # convert to writable numpy array
     src_image = np.asarray(src_image_raw, dtype=np.float32)
     src_image.setflags(write=True)
+    
+    # some dummy label
+    label = -99.99
+    # the labels
+    if not (labels == None):
+        label = label_map[fnames_src[img_idx]]
+    else:
+        # add a dummy label
+        label = np.random.rand()
     
     lines = ''
     
@@ -136,8 +161,11 @@ def processImage(path, label):
             if flip_xy:
                 rot_sample_crop_xy = cv2.flip(rot_sample_crop,-1)
                 lines+=addSample(rot_sample_crop_xy,label)
+    
+    counter+=1
 
     return lines
+
 
 
 def createDataset(sources,output,labels,sparse):
@@ -148,6 +176,7 @@ def createDataset(sources,output,labels,sparse):
     [label] [index0:value0] [index1:value1] ... [indexN:valueN]
     
     """
+    global has_joblib
     out_path = str(output)
     # delete the output file
     if os.path.exists(out_path):
@@ -163,24 +192,21 @@ def createDataset(sources,output,labels,sparse):
     if not (labels == None):
         label_map = utils.readLabelMap(labels)
         # check that the numbers match
-        print("Number of images in label map : %s"%str(len(label_map.keys())))
+        print("Number of images in label map : %s"%str(len(label_map.keys())-1))
         print("Number of images in source dir: %s"%str(len(fpaths_src)))
         assert len(label_map.keys())-1 == len(fpaths_src)
+      
+    n_imgs = len(fpaths_src)
     
-    # some dummy label
-    label = -99.99
-    
-    # now process the images
-    for img_idx in xrange(len(fpaths_src)):
-        if not (labels == None):
-            label = label_map[fnames_src[img_idx]]
-        else:
-            # add a dummy label
-            label = np.random.rand()
-            
-        line = processImage(fpaths_src[img_idx], label)
-        output_file.writelines(line)
-    
+    # parallel implementation (default, if joblib available)
+    if has_joblib:
+        lines_par = Parallel(n_jobs=args.njobs,verbose=5) (delayed(processImage)(fpaths_src, labels, label_map, fnames_src, img_idx) for img_idx in range(n_imgs))
+        output_file.writelines(lines_par)
+    else:
+        for img_idx in xrange(n_imgs):
+            line = processImage(fpaths_src, labels, label_map, fnames_src, img_idx)
+            output_file.writelines(line)
+        
     output_file.close()
     
     return 0
@@ -188,6 +214,9 @@ def createDataset(sources,output,labels,sparse):
 if __name__ == "__main__":
     parser = make_argument_parser()
     args = parser.parse_args()
+    # global counter
+    global counter 
+    counter = 0
     ret = createDataset(args.sources, args.output, args.labels, args.sparse)
     print "Done."
     if not ret:
