@@ -48,13 +48,13 @@ def make_argument_parser():
                         default=None,
                         help='Specifies a spatial normalization width and height for each image')
     parser.add_argument('--scale',
-                        default=True,
+                        default=1,
                         help='Specifies, whether to scale all feature values between 0 and 1')
     parser.add_argument('--sparse',
-                        default=True,
+                        default=1,
                         help='Specifies, whether to make sparse libsvm-format')
     parser.add_argument('--augment',
-                        default=False,
+                        default=0,
                         help='Specifies, whether to augment the image data with rotations and mirroring')
     parser.add_argument('--njobs',
                         default=multiprocessing.cpu_count(),
@@ -84,22 +84,23 @@ def extractFeatures(image, feature_list):
 
     for feature in feature_list.split(','):
         if (feature == 'color'):
-            
+            print "computing color features"
             # scale from 0-255 between 0 and 1
-            if args.scale:
+            if args.scale == 1:
                 img_f32 /= 255.
             
             f_tmp = img_f32.flatten()
             feat_vec = np.append(feat_vec, f_tmp)
         
         if (feature == 'dsift'):
+            print "computing dsift features"
             dense = cv2.FeatureDetector_create("Dense")
             sift = cv2.SIFT()
             if n_channels == 1:
-                kp = dense.detect(img_f32[:,:])
-                _,des = sift.compute(img_f32[:,:],kp)
+                kp = dense.detect(image[:,:])
+                _,des = sift.compute(image[:,:],kp)
                 # store the normalized descriptor values
-                if args.scale:
+                if args.scale == 1:
                     des /= des.size    
                 feat_vec = np.append(feat_vec, des)
             else:
@@ -107,7 +108,7 @@ def extractFeatures(image, feature_list):
                     kp = dense.detect(image[:,:,channel])
                     _,des = sift.compute(image[:,:,channel],kp)
                     # store the normalized descriptor values
-                    if args.scale:
+                    if args.scale == 1:
                         des /= des.size    
                     feat_vec = np.append(feat_vec, des)
     
@@ -121,12 +122,12 @@ def convert2libsvm(f_vec, label):
     line += str(label)
     
     # skip zero entries
-    for feat_idx in xrange(f_vec.size):
-        value = f_vec[feat_idx]
-        if args.sparse and value == 0:
+    for feat_idx in xrange(1,f_vec.size+1):
+        value = f_vec[feat_idx-1]
+        if args.sparse == 1 and value == 0:
             continue
         else:
-            line += (' ' + str(feat_idx) + ':' + str(f_vec[feat_idx]))
+            line += (' ' + str(feat_idx) + ':' + str(f_vec[feat_idx-1]))
         
     return line
 
@@ -163,7 +164,7 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
     label = -99.99
     # the labels
     if not (label_map == {}):
-        label = label_map[fnames_src[img_idx]]
+        label = int(label_map[fnames_src[img_idx]])+1
     else:
         # add a dummy label
         label = np.random.rand()
@@ -173,7 +174,7 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
     # add the original label
     lines+=addSample(src_image,label)
     
-    if args.augment:
+    if args.augment == 1:
         print "Augmenting dataset..."
         # data augmentation techniques
         rotation_angles = [i for i in xrange(36,360,36)] # samples are transformed by these rotation angles
@@ -264,8 +265,11 @@ def createDataset(sources,output,labels,sparse):
 if __name__ == "__main__":
     parser = make_argument_parser()
     args = parser.parse_args()
+    args.augment = int(args.augment)
+    args.njobs = int(args.njobs)
+    args.scale = int(args.scale)
+
     # global counter
-    global counter 
     counter = 0
     ret = createDataset(args.sources, args.output, args.labels, args.sparse)
     print "Done."
