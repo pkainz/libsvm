@@ -2,3 +2,10 @@
 *.mex*
 *.pyc
 *.o
+*.config
+*.creator
+*.files
+*.includes
+*.user
+*.out
+*~
