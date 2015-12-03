@@ -49,36 +49,84 @@ def make_argument_parser():
                         help='Specifies a spatial normalization width and height for each image')
     parser.add_argument('--scale',
                         default=True,
-                        help='Specifies, whether to scale values between 0 and 1')
+                        help='Specifies, whether to scale all feature values between 0 and 1')
     parser.add_argument('--sparse',
                         default=True,
                         help='Specifies, whether to make sparse libsvm-format')
     parser.add_argument('--augment',
-                        default=True,
+                        default=False,
                         help='Specifies, whether to augment the image data with rotations and mirroring')
     parser.add_argument('--njobs',
                         default=multiprocessing.cpu_count(),
                         help='Specifies the number of cpus for multiprocessing')
+    parser.add_argument('--features',
+                        default='color',
+                        help='Specifies a list of features to be concatenated. \n' 
+                            + 'color: vectorized intensities (for either grey value image or color image)\n' 
+                            + 'dsift: dense SIFT descriptor for all channels in the image\n')
     
     return parser
 
+def addRandomNoise(image):
+    """
+    A routine to add random noise to the images.
+    """
 
-def im2libsvm(image, label):
+def extractFeatures(image, feature_list):
     """
-    Vectorize the image and create sparse version of that.
+    Extracts a number of features for a channel. Features are concatenated into a 
+    row-vector. 
     """
-    v_image = image.flatten()
+    feat_vec = np.array([])
+    n_channels = (image.shape[2] if len(image.shape)==3 else 1)
     
+    img_f32 = image.astype(np.float32)
+
+    for feature in feature_list.split(','):
+        if (feature == 'color'):
+            
+            # scale from 0-255 between 0 and 1
+            if args.scale:
+                img_f32 /= 255.
+            
+            f_tmp = img_f32.flatten()
+            feat_vec = np.append(feat_vec, f_tmp)
+        
+        if (feature == 'dsift'):
+            dense = cv2.FeatureDetector_create("Dense")
+            sift = cv2.SIFT()
+            if n_channels == 1:
+                kp = dense.detect(img_f32[:,:])
+                _,des = sift.compute(img_f32[:,:],kp)
+                # store the normalized descriptor values
+                if args.scale:
+                    des /= des.size    
+                feat_vec = np.append(feat_vec, des)
+            else:
+                for channel in xrange(n_channels):
+                    kp = dense.detect(image[:,:,channel])
+                    _,des = sift.compute(image[:,:,channel],kp)
+                    # store the normalized descriptor values
+                    if args.scale:
+                        des /= des.size    
+                    feat_vec = np.append(feat_vec, des)
+    
+    return feat_vec
+
+def convert2libsvm(f_vec, label):
+    """
+    Create a sparse string representation of the feature vector.
+    """
     line = ''
     line += str(label)
     
     # skip zero entries
-    for feat_idx in xrange(v_image.size):
-        value = v_image[feat_idx]
+    for feat_idx in xrange(f_vec.size):
+        value = f_vec[feat_idx]
         if args.sparse and value == 0:
             continue
         else:
-            line += (' ' + str(feat_idx) + ':' + str(v_image[feat_idx]))
+            line += (' ' + str(feat_idx) + ':' + str(f_vec[feat_idx]))
         
     return line
 
@@ -86,12 +134,10 @@ def addSample(src_image, label):
     """
     Creates a single line for the dataset.
     """
-    # scale from 0-255 between 0 and 1
-    if args.scale:
-        src_image /= 255.
-    
+    # computes the features
+    f_vec = extractFeatures(src_image, args.features)
     # make the libsvm format
-    line = im2libsvm(src_image, label)
+    line = convert2libsvm(f_vec, label)
     return line + "\n"
 
 def processImage(fpaths_src, label_map, fnames_src, img_idx):
@@ -110,7 +156,7 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
         src_image_raw = src_image_raw.resize(size=(int(args.resize), int(args.resize)), resample=Image.BILINEAR)
     
     # convert to writable numpy array
-    src_image = np.asarray(src_image_raw, dtype=np.float32)
+    src_image = np.asarray(src_image_raw, dtype=np.uint8)
     src_image.setflags(write=True)
     
     # some dummy label
@@ -127,7 +173,7 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
     # add the original label
     lines+=addSample(src_image,label)
     
-    if args.augment == True:
+    if args.augment:
         print "Augmenting dataset..."
         # data augmentation techniques
         rotation_angles = [i for i in xrange(36,360,36)] # samples are transformed by these rotation angles
