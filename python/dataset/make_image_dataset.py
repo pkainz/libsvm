@@ -3,7 +3,7 @@
 Create a (sparse) dataset for libsvm from a set of images.
 
 Test the script with the following terminal command:
-    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse True --resize 32 --scale True --augment True --njobs
+    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse True --resize 32 --scale True --augment True --njobs 2
 
 Created on Nov 23, 2015
 
@@ -127,7 +127,8 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
     # add the original label
     lines+=addSample(src_image,label)
     
-    if args.augment:
+    if args.augment == True:
+        print "Augmenting dataset..."
         # data augmentation techniques
         rotation_angles = [i for i in xrange(36,360,36)] # samples are transformed by these rotation angles
         
