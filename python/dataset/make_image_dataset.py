@@ -85,8 +85,8 @@ def extractFeatures(image, feature_list):
     
     img_f32 = image.astype(np.float32)
 
-    for feature in feature_list.split(','):
-        if (feature == 'color'):
+    for feature in feature_list:
+        if (feature.strip().lower() == 'color'):
             print "computing color features"
             # scale from 0-255 between 0 and 1
             if args.scale == 1:
@@ -95,7 +95,7 @@ def extractFeatures(image, feature_list):
             f_tmp = img_f32.flatten()
             feat_vec = np.append(feat_vec, f_tmp)
         
-        if (feature == 'dsift'):
+        if (feature.strip().lower() == 'dsift'):
             print "computing dsift features"
             dense = cv2.FeatureDetector_create("Dense")
             sift = cv2.SIFT()
@@ -142,6 +142,7 @@ def addSample(src_image, label):
     """
     Creates a single line for the dataset.
     """
+    
     # computes the features
     f_vec = extractFeatures(src_image, args.features)
     # make the libsvm format
@@ -277,6 +278,7 @@ if __name__ == "__main__":
     args.njobs = int(args.njobs)
     args.scale = int(args.scale)
     args.sparse = int(args.sparse)
+    args.features = args.features.split(',')
 
     # global counter
     counter = 0
