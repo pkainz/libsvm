@@ -59,6 +59,9 @@ def make_argument_parser():
     parser.add_argument('--njobs',
                         default=multiprocessing.cpu_count(),
                         help='Specifies the number of cpus for multiprocessing')
+    parser.add_argument('--ova',
+                        default=None,
+                        help='Specifies the label ID, that will be the positive class')
     parser.add_argument('--features',
                         default='color',
                         help='Specifies a list of features to be concatenated. \n' 
@@ -119,7 +122,11 @@ def convert2libsvm(f_vec, label):
     Create a sparse string representation of the feature vector.
     """
     line = ''
-    line += str(label)
+    if not (args.ova == None):
+        line += '+1' if (str(label) == str(args.ova)) else '-1'
+    else:
+        line += str(label)
+   
     
     # skip zero entries
     for feat_idx in xrange(1,f_vec.size+1):
@@ -265,9 +272,11 @@ def createDataset(sources,output,labels,sparse):
 if __name__ == "__main__":
     parser = make_argument_parser()
     args = parser.parse_args()
+    # some type conversion
     args.augment = int(args.augment)
     args.njobs = int(args.njobs)
     args.scale = int(args.scale)
+    args.sparse = int(args.sparse)
 
     # global counter
     counter = 0
