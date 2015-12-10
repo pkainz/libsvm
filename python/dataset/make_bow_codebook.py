@@ -52,7 +52,7 @@ def make_argument_parser():
                         default=32,
                         help='Specifies the size of the codebook (k clusters)')
     parser.add_argument('--njobs',
-                        default=1,#multiprocessing.cpu_count(),
+                        default=multiprocessing.cpu_count(),
                         help='Specifies the number of cpus for multiprocessing')
     parser.add_argument('--features',
                         default='dsift',

@@ -66,7 +66,7 @@ def make_argument_parser():
                         default=0,
                         help='Specifies, whether to augment the image data with rotations and mirroring')
     parser.add_argument('--njobs',
-                        default=1,#multiprocessing.cpu_count(),
+                        default=multiprocessing.cpu_count(),
                         help='Specifies the number of cpus for multiprocessing')
     parser.add_argument('--ova',
                         default=None,
