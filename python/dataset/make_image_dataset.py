@@ -8,7 +8,7 @@ The labels in labels.txt are expected to start at 0 and to be continuous.
 This script then adds +1 to all labels, such that unlabeled instances are identified by random 
 labels between [0,1).
 
-If a positive label using 'ova‘ (one-versus-all) is specified, it corresponds to the label in 
+If a positive label using 'ova' (one-versus-all) is specified, it corresponds to the label in 
 your original data. 
 
 Run the script with the following terminal command:
