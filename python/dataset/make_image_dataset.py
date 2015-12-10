@@ -3,7 +3,7 @@
 Create a (sparse) dataset for libsvm from a set of images.
 
 Test the script with the following terminal command:
-    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse 1 --resize 32 --scale 1 --augment 1 --njobs 2 --labels ../test/labels.txt
+    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse 1 --resize 32 --scale 1 --augment 1 --njobs 2 --labels ../test/labels.txt --features dsift
 
 Created on Nov 23, 2015
 
@@ -11,12 +11,12 @@ Created on Nov 23, 2015
 '''
 
 import sys, os
+import multiprocessing
 prj_root = os.path.dirname(os.path.abspath(__file__))
 # add root directory to the python path
 sys.path.insert(0, prj_root + '/..')
 
 import cv2
-import multiprocessing
 
 from PIL import Image
 from common import utils
@@ -96,23 +96,34 @@ def extractFeatures(image, feature_list):
             feat_vec = np.append(feat_vec, f_tmp)
         
         if (feature.strip().lower() == 'dsift'):
-            print "computing dsift features"
+            print "computing dsift (dense rootSift) features"
             dense = cv2.FeatureDetector_create("Dense")
             sift = cv2.SIFT()
             if n_channels == 1:
                 kp = dense.detect(image[:,:])
+                # compute kp descriptors
                 _,des = sift.compute(image[:,:],kp)
-                # store the normalized descriptor values
-                if args.scale == 1:
-                    des /= des.size    
+                
+                # normalize the descriptors (L1)
+                des /= (des.sum(axis=1, keepdims=True) + 1e-7)
+                des = np.sqrt(des)
+                              
+                # store the unit-normalize the descriptor values
+                #if args.scale == 1:
+                #    des /= np.max(des)    
                 feat_vec = np.append(feat_vec, des)
             else:
                 for channel in xrange(n_channels):
                     kp = dense.detect(image[:,:,channel])
                     _,des = sift.compute(image[:,:,channel],kp)
+                    
+                    # normalize the descriptors (L1)
+                    des /= (des.sum(axis=1, keepdims=True) + 1e-7)
+                    des = np.sqrt(des)
+                    
                     # store the normalized descriptor values
-                    if args.scale == 1:
-                        des /= des.size    
+                    #if args.scale == 1:
+                    #    des /= des.size    
                     feat_vec = np.append(feat_vec, des)
     
     return feat_vec
