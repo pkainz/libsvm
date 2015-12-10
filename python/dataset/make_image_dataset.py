@@ -1,9 +1,18 @@
 #!/usr/bin/env python
 '''
 Create a (sparse) dataset for libsvm from a set of images.
+The standard feature used is dense SIFT [Lowe, 1999], and if a SIFT codebook is available, the 
+bag-of-visual-words approach is produced. The output will either be a nx128 feature matrix, or
+an nxk matrix, where k is the number of visual codewords in the codebook. 
+The labels in labels.txt are expected to start at 0 and to be continuous. 
+This script then adds +1 to all labels, such that unlabeled instances are identified by random 
+labels between [0,1).
 
-Test the script with the following terminal command:
-    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse 1 --resize 32 --scale 1 --augment 1 --njobs 2 --labels ../test/labels.txt --features dsift --ova 6 --codebook ../test/ds.bowcodebook
+If a positive label using 'ova‘ (one-versus-all) is specified, it corresponds to the label in 
+your original data. 
+
+Run the script with the following terminal command:
+    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse 1 --resize 32 --scale 1 --augment 1 --njobs 2 --labels ../test/labels.txt --features dsift --ova 6 --codebook ../test/test.bowcodebook
 
 Created on Nov 23, 2015
 
@@ -57,7 +66,7 @@ def make_argument_parser():
                         default=0,
                         help='Specifies, whether to augment the image data with rotations and mirroring')
     parser.add_argument('--njobs',
-                        default=multiprocessing.cpu_count(),
+                        default=1,#multiprocessing.cpu_count(),
                         help='Specifies the number of cpus for multiprocessing')
     parser.add_argument('--ova',
                         default=None,
@@ -68,18 +77,18 @@ def make_argument_parser():
     parser.add_argument('--features',
                         default='dsift',
                         help='Specifies a list of features to be concatenated. \n' 
-                            + 'color: vectorized intensities (for either grey value image or color image)\n' 
+                            #+ 'color: vectorized intensities (for either grey value image or color image)\n' 
                             + 'dsift: dense SIFT descriptor for all channels in the image\n')
     
     return parser
 
 def getKNNClassifier():
     """
-    Load the BoW codebook and construct the kd-search tree. 
+    Load the BoW codebook and construct the kd search tree. 
     Compute the nearest neighbor out of 3 for a 'new_data' sample by calling 
         knn.find_nearest(new_data,3)
     """
-    codebook = np.loadtxt(args.codebook, dtype=np.float32)
+    codebook = np.loadtxt(args.codebook, delimiter=' ', dtype=np.float32)
     
     args.nVisualWords = codebook.shape[0]
     
@@ -102,7 +111,7 @@ def extractFeatures(image, feature_list):
     feat_vec = np.empty((0,128))
     n_channels = (image.shape[2] if len(image.shape)==3 else 1)
     
-    img_f32 = image.astype(np.float32)
+    #img_f32 = image.astype(np.float32)
 
     for feature in feature_list:
         if (feature.strip().lower() == 'dsift'):
@@ -148,8 +157,10 @@ def convert2libsvm(f_vec, label):
     Create a sparse string representation of the feature vector.
     """
     line = ''
+    
+    # if you specified a positive label ID in your data for one-versus-all
     if not (args.ova == None):
-        line += '+1' if (str(label) == str(args.ova)) else '-1'
+        line += '+1' if (str(label-1) == str(args.ova)) else '-1'
     else:
         line += str(label)
    
@@ -168,9 +179,9 @@ def getHistogramOfVisualWords(f_vec, knn):
     """
     Compute the nearest cluster center and return a histogram of codewords.
     """
-    hist = np.zeros((1,args.nVisualWords))
+    hist = np.zeros((1,args.nVisualWords)).flatten()
     
-    print "Computing histogram"
+    print "Computing BoW histogram..."
     ret, results, neighbours, dist = knn.find_nearest(f_vec.astype(np.float32), 3)
 
     # count unique values
@@ -182,7 +193,7 @@ def getHistogramOfVisualWords(f_vec, knn):
     for tuple_ in tmp:
         hist[tuple_[0]] = tuple_[1]
     
-    return hist.flatten()
+    return hist
 
 def generateFeatures(src_image, label, knn=None):
     """
@@ -195,6 +206,9 @@ def generateFeatures(src_image, label, knn=None):
     # quantize, if codebook is present
     if not (knn == None):
         f_vec = getHistogramOfVisualWords(f_vec, knn)
+    else:
+        # flatten the array
+        f_vec = f_vec.flatten()
     
     # make the libsvm format
     line = convert2libsvm(f_vec, label)
@@ -229,9 +243,10 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
     label = -99.99
     # the labels
     if not (label_map == {}):
+        # let the label start at 1, instead of 0
         label = int(label_map[fnames_src[img_idx]])+1
     else:
-        # add a dummy label
+        # add a dummy label (between 0 and 1)
         label = np.random.rand()
     
     lines = ''
@@ -293,11 +308,7 @@ def createDataset(sources,output,labels,sparse):
     out_path = str(output)
     # delete the output file
     if os.path.exists(os.path.abspath(out_path)):
-        print "Removing old file..."
         os.remove(os.path.abspath(out_path))
-    
-    # open the output file
-    output_file = open(os.path.abspath(out_path), 'wb')
     
     # first, list the source files
     fpaths_src, fnames_src = utils.listFiles(directory=os.path.abspath(sources), ext='png')
@@ -313,6 +324,9 @@ def createDataset(sources,output,labels,sparse):
         assert len(label_map.keys())-1 == len(fpaths_src)
     
     n_imgs = len(fpaths_src)
+    
+    # open the output file
+    output_file = open(os.path.abspath(out_path), 'wb')
     
     # parallel implementation (default, if joblib available)
     if has_joblib:

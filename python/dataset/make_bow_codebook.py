@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 '''
-Create a bag-of-visual-words codebook from a set of image features (e.g. SIFT).
-Each row in the codebook is a cluster center.  
+Create a bag-of-visual-words codebook from a set of image features (SIFT).
+Each row in the codebook is a cluster center identified by k-means clustering.  
 
-Test the script with the following terminal command:
+Run the script with the following terminal command:
     ./make_bow_codebook.py ../test/ ../test/test.bowcodebook --resize 32 --augment 1 --njobs 2 --features dsift --k 32
 
 Created on Dec 10, 2015
@@ -57,7 +57,6 @@ def make_argument_parser():
     parser.add_argument('--features',
                         default='dsift',
                         help='Specifies a list of features to be concatenated. \n' 
-                            + 'color: vectorized intensities (for either grey value image or color image)\n' 
                             + 'dsift: dense SIFT descriptor for all channels in the image\n')
     
     return parser
@@ -139,7 +138,7 @@ def processImage(fpaths_src, fnames_src, img_idx):
         flip_xy= True # data augmentation by flipping around x AND y axis
         
         for angle in rotation_angles:
-            print "Computing angle %s" % angle
+            #print "Computing angle %s" % angle
             rot_matrix = cv2.getRotationMatrix2D(
                                                  (src_image.shape[1]/2.,src_image.shape[0]/2.),
                                                  angle,
