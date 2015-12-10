@@ -107,6 +107,9 @@ def extractFeatures(image, feature_list):
                 # normalize the descriptors (L1)
                 des /= (des.sum(axis=1, keepdims=True) + 1e-7)
                 des = np.sqrt(des)
+                
+                if (np.max(des)>1):
+                    raise Exception("Shit!")
                               
                 # store the unit-normalize the descriptor values
                 #if args.scale == 1:
