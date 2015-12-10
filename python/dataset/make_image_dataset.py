@@ -58,7 +58,8 @@ def make_argument_parser():
                         help='Specifies a spatial normalization width and height for each image')
     parser.add_argument('--scale',
                         default=1,
-                        help='Specifies, whether to scale all feature values between 0 and 1')
+                        help='Specifies, whether to (i) normalize features to zero-mean and unit-variance,'
+                        + ' and then (ii) linearly scale all feature values between -1 and 1')
     parser.add_argument('--sparse',
                         default=1,
                         help='Specifies, whether to make sparse libsvm-format')
@@ -152,11 +153,13 @@ def extractFeatures(image, feature_list):
     
     return feat_vec
 
-def convert2libsvm(f_vec, label):
+def convert2libsvm(f_vec):
     """
     Create a sparse string representation of the feature vector.
     """
     line = ''
+    
+    label = int(f_vec[0])
     
     # if you specified a positive label ID in your data for one-versus-all
     if not (args.ova == None):
@@ -164,9 +167,8 @@ def convert2libsvm(f_vec, label):
     else:
         line += str(label)
    
-    
     # skip zero entries
-    for feat_idx in xrange(1,f_vec.size+1):
+    for feat_idx in xrange(2,f_vec.size+1):
         value = f_vec[feat_idx-1]
         if args.sparse == 1 and value == 0:
             continue
@@ -210,20 +212,16 @@ def generateFeatures(src_image, label, knn=None):
         # flatten the array
         f_vec = f_vec.flatten()
     
-    # make the libsvm format
-    line = convert2libsvm(f_vec, label)
-    return line + "\n"
+    # prepend the label
+    f_vec = np.hstack((label, f_vec))
+    
+    return f_vec
 
 def processImage(fpaths_src, label_map, fnames_src, img_idx):
     """
     Load the image from the specified path and create the libsvm format.
     """
     global counter
-
-    if not (args.codebook == 'None' or args.codebook == None):
-        knn = getKNNClassifier()  
-    else:
-        knn = None
     
     n_imgs = len(fpaths_src)
     print("Processing %s -- %s/%s (%s%%)"%(fnames_src[img_idx],counter,n_imgs,round(100.*counter/n_imgs)))
@@ -249,10 +247,10 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
         # add a dummy label (between 0 and 1)
         label = np.random.rand()
     
-    lines = ''
+    image_features = []
     
-    # add the original label
-    lines+=generateFeatures(src_image,label,knn)
+    # add the original
+    image_features.append(generateFeatures(src_image,label,args.knn))
     
     if args.augment == 1:
         print "Augmenting dataset..."
@@ -277,22 +275,23 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
                            cv2.BORDER_REFLECT_101)
             
             # add the sample to the dataset
-            lines+=generateFeatures(rot_sample_crop,label,knn)
+            image_features.append(generateFeatures(rot_sample_crop,label,args.knn))
             
             # add 3 flipped copies
             if flip_x:
                 rot_sample_crop_x = cv2.flip(rot_sample_crop,0)
-                lines+=generateFeatures(rot_sample_crop_x,label,knn)
+                image_features.append(generateFeatures(rot_sample_crop_x,label,args.knn))
             if flip_y:
                 rot_sample_crop_y = cv2.flip(rot_sample_crop,1)
-                lines+=generateFeatures(rot_sample_crop_y,label,knn)
+                image_features.append(generateFeatures(rot_sample_crop_y,label,args.knn))
             if flip_xy:
                 rot_sample_crop_xy = cv2.flip(rot_sample_crop,-1)
-                lines+=generateFeatures(rot_sample_crop_xy,label,knn)
+                image_features.append(generateFeatures(rot_sample_crop_xy,label,args.knn))
     
     counter+=1
 
-    return lines
+    # return a nx128 or nxk matrix for the features of all modifications of this image
+    return np.concatenate(image_features, axis=0)
 
 
 
@@ -323,20 +322,69 @@ def createDataset(sources,output,labels,sparse):
         print("Number of images in source dir: %s"%str(len(fpaths_src)))
         assert len(label_map.keys())-1 == len(fpaths_src)
     
+    # generate KNN classifier
+    if not (args.codebook == 'None' or args.codebook == None):
+        args.knn = getKNNClassifier()  
+    else:
+        args.knn = None
+    
+    # precompute number of images
     n_imgs = len(fpaths_src)
     
-    # open the output file
-    output_file = open(os.path.abspath(out_path), 'wb')
-    
+    # preallocate array
+    # if augmentation, calculate (9*4+1)*n samples
+    all_features_list = []
+        
     # parallel implementation (default, if joblib available)
     if has_joblib:
-        lines_par = Parallel(n_jobs=args.njobs,verbose=5) (delayed(processImage)(fpaths_src, label_map, fnames_src, img_idx) for img_idx in range(n_imgs))
-        output_file.writelines(lines_par)
+        image_features = Parallel(n_jobs=args.njobs,verbose=5) (delayed(processImage)(fpaths_src, label_map, fnames_src, img_idx) for img_idx in range(n_imgs))
+        #image_features = np.concatenate(image_features,axis=0)
+        all_features_list.append(image_features)
     else:
         for img_idx in xrange(n_imgs):
-            line = processImage(fpaths_src, label_map, fnames_src, img_idx)
-            output_file.writelines(line)
+            image_features = processImage(fpaths_src, label_map, fnames_src, img_idx)
+            all_features_list.append(image_features)
+    
+    # make a 2D matrix from the list of features (stack all images vertically)
+    feat_matrix = np.concatenate(all_features_list, axis=0).astype(np.float32)    
+    
+    # do feature scaling # TODO BUG in scaling
+    if False:
+    #if (args.scale == 1):
+        # preserve the labels
+        label_vec = feat_matrix[:,0]
+        feat_matrix = np.delete(feat_matrix,0,1)
         
+        for feat_idx in xrange(feat_matrix.shape[1]):
+            feat_vec = feat_matrix[:,feat_idx]
+             
+            # first shift to zero mean and unit variance
+            #feat_vec_zeromean = feat_vec - feat_vec.mean()
+            #feat_vec_unitvar = feat_vec_zeromean / (feat_vec.std() + 1e-10)
+         
+            # standardize/normalize between 0 and 1
+            #feat_vec_std = (feat_vec - np.min(feat_vec)) / (np.max(feat_vec) - np.min(feat_vec) + 1e-10)
+             
+            # then linearly scale between -1 and 1 
+            #feat_vec_scale = 1.0*feat_vec_std * (1 - -1) - 1        
+         
+            # set column back to matrix
+            feat_matrix[:,feat_idx] = feat_vec
+        
+        # finally add the label_vec again
+        feat_matrix = np.concatenate((np.reshape(label_vec,(feat_matrix.shape[0],1)),feat_matrix), axis=1)
+           
+    else:
+        print "Data may not be properly scaled, use the 'svm-scale' implementation."
+
+    # open the output file
+    output_file = open(os.path.abspath(out_path), 'wb')
+
+    # run through the feature matrix    
+    for row_idx in xrange(feat_matrix.shape[0]):
+        # make the libsvm format
+        line = convert2libsvm(feat_matrix[row_idx,:])
+        output_file.writelines(line + "\n")
     output_file.close()
     
     return 0

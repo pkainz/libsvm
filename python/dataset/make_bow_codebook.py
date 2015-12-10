@@ -194,6 +194,7 @@ def createDataset(sources,output):
         image_features = Parallel(n_jobs=args.njobs,verbose=5) (delayed(processImage)(fpaths_src, fnames_src, img_idx) for img_idx in range(n_imgs))
         # stack the individual images
         image_features = np.concatenate(image_features,axis=0)
+        print image_features.shape
         all_features_list.append(image_features)
     else:
         for img_idx in xrange(n_imgs):
