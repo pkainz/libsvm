@@ -3,7 +3,7 @@
 Create a (sparse) dataset for libsvm from a set of images.
 
 Test the script with the following terminal command:
-    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse 1 --resize 32 --scale 1 --augment 1 --njobs 2 --labels ../test/labels.txt --features dsift --ova 6
+    ./make_image_dataset.py ../test/ ../test/ds.libsvm --sparse 1 --resize 32 --scale 1 --augment 1 --njobs 2 --labels ../test/labels.txt --features dsift --ova 6 --codebook ../test/ds.bowcodebook
 
 Created on Nov 23, 2015
 
@@ -62,39 +62,49 @@ def make_argument_parser():
     parser.add_argument('--ova',
                         default=None,
                         help='Specifies the label ID, that will be the positive class')
+    parser.add_argument('--codebook',
+                        default=None,
+                        help='Specifies the bag of words codebook to be used in the quantization for dsift features')
     parser.add_argument('--features',
-                        default='color',
+                        default='dsift',
                         help='Specifies a list of features to be concatenated. \n' 
                             + 'color: vectorized intensities (for either grey value image or color image)\n' 
                             + 'dsift: dense SIFT descriptor for all channels in the image\n')
     
     return parser
 
-def addRandomNoise(image):
+def getKNNClassifier():
     """
-    A routine to add random noise to the images.
+    Load the BoW codebook and construct the kd-search tree. 
+    Compute the nearest neighbor out of 3 for a 'new_data' sample by calling 
+        knn.find_nearest(new_data,3)
     """
+    codebook = np.loadtxt(args.codebook, dtype=np.float32)
+    
+    args.nVisualWords = codebook.shape[0]
+    
+    # find nearest neighbor in the codebook
+    knn = cv2.KNearest()
+    # construct kd-tree with labels from 0 - (nCodewords-1)
+    knn.train(codebook,np.arange(args.nVisualWords))
+    
+    return knn
 
 def extractFeatures(image, feature_list):
     """
     Extracts a number of features for a channel. Features are concatenated into a 
     row-vector. 
     """
-    feat_vec = np.array([])
+    # for multiple features  or color features
+    #feat_vec = np.array([])
+    
+    # sift has 128D
+    feat_vec = np.empty((0,128))
     n_channels = (image.shape[2] if len(image.shape)==3 else 1)
     
     img_f32 = image.astype(np.float32)
 
     for feature in feature_list:
-        if (feature.strip().lower() == 'color'):
-            print "computing color features"
-            # scale from 0-255 between 0 and 1
-            if args.scale == 1:
-                img_f32 /= 255.
-            
-            f_tmp = img_f32.flatten()
-            feat_vec = np.append(feat_vec, f_tmp)
-        
         if (feature.strip().lower() == 'dsift'):
             print "computing dsift (dense rootSift) features"
             dense = cv2.FeatureDetector_create("Dense")
@@ -107,12 +117,8 @@ def extractFeatures(image, feature_list):
                 # normalize the descriptors (L1)
                 des /= (des.sum(axis=1, keepdims=True) + 1e-7)
                 des = np.sqrt(des)
-
-                              
-                # store the unit-normalize the descriptor values
-                #if args.scale == 1:
-                #    des /= np.max(des)    
-                feat_vec = np.append(feat_vec, des)
+  
+                feat_vec = np.vstack((feat_vec, des))
             else:
                 for channel in xrange(n_channels):
                     kp = dense.detect(image[:,:,channel])
@@ -121,11 +127,19 @@ def extractFeatures(image, feature_list):
                     # normalize the descriptors (L1)
                     des /= (des.sum(axis=1, keepdims=True) + 1e-7)
                     des = np.sqrt(des)
-                    
-                    # store the normalized descriptor values
-                    #if args.scale == 1:
-                    #    des /= des.size    
-                    feat_vec = np.append(feat_vec, des)
+
+                    feat_vec = np.vstack((feat_vec, des))
+        
+#         if (feature.strip().lower() == 'color'):
+#             print "computing color features"
+#             # scale from 0-255 between 0 and 1
+#             if args.scale == 1:
+#                 img_f32 /= 255.
+#             
+#             f_tmp = img_f32.flatten()
+#             feat_vec = np.append(feat_vec, f_tmp)
+        else:
+            raise Exception("Method '%s' is not implemented!"%(feature))  
     
     return feat_vec
 
@@ -150,13 +164,38 @@ def convert2libsvm(f_vec, label):
         
     return line
 
-def addSample(src_image, label):
+def getHistogramOfVisualWords(f_vec, knn):
+    """
+    Compute the nearest cluster center and return a histogram of codewords.
+    """
+    hist = np.zeros((1,args.nVisualWords))
+    
+    print "Computing histogram"
+    ret, results, neighbours, dist = knn.find_nearest(f_vec.astype(np.float32), 3)
+
+    # count unique values
+    y = np.bincount(results.astype(np.int64).flatten())
+    ii = np.nonzero(y)[0]
+    tmp = zip(ii,y[ii])
+
+    # count the frequencies of the result labels
+    for tuple_ in tmp:
+        hist[tuple_[0]] = tuple_[1]
+    
+    return hist.flatten()
+
+def generateFeatures(src_image, label, knn=None):
     """
     Creates a single line for the dataset.
     """
     
     # computes the features
     f_vec = extractFeatures(src_image, args.features)
+    
+    # quantize, if codebook is present
+    if not (knn == None):
+        f_vec = getHistogramOfVisualWords(f_vec, knn)
+    
     # make the libsvm format
     line = convert2libsvm(f_vec, label)
     return line + "\n"
@@ -166,6 +205,12 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
     Load the image from the specified path and create the libsvm format.
     """
     global counter
+
+    if not (args.codebook == 'None' or args.codebook == None):
+        knn = getKNNClassifier()  
+    else:
+        knn = None
+    
     n_imgs = len(fpaths_src)
     print("Processing %s -- %s/%s (%s%%)"%(fnames_src[img_idx],counter,n_imgs,round(100.*counter/n_imgs)))
     
@@ -192,7 +237,7 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
     lines = ''
     
     # add the original label
-    lines+=addSample(src_image,label)
+    lines+=generateFeatures(src_image,label,knn)
     
     if args.augment == 1:
         print "Augmenting dataset..."
@@ -217,18 +262,18 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
                            cv2.BORDER_REFLECT_101)
             
             # add the sample to the dataset
-            lines+=addSample(rot_sample_crop,label)
+            lines+=generateFeatures(rot_sample_crop,label,knn)
             
             # add 3 flipped copies
             if flip_x:
                 rot_sample_crop_x = cv2.flip(rot_sample_crop,0)
-                lines+=addSample(rot_sample_crop_x,label)
+                lines+=generateFeatures(rot_sample_crop_x,label,knn)
             if flip_y:
                 rot_sample_crop_y = cv2.flip(rot_sample_crop,1)
-                lines+=addSample(rot_sample_crop_y,label)
+                lines+=generateFeatures(rot_sample_crop_y,label,knn)
             if flip_xy:
                 rot_sample_crop_xy = cv2.flip(rot_sample_crop,-1)
-                lines+=addSample(rot_sample_crop_xy,label)
+                lines+=generateFeatures(rot_sample_crop_xy,label,knn)
     
     counter+=1
 
@@ -247,11 +292,12 @@ def createDataset(sources,output,labels,sparse):
     global has_joblib
     out_path = str(output)
     # delete the output file
-    if os.path.exists(out_path):
-        os.remove(out_path)
+    if os.path.exists(os.path.abspath(out_path)):
+        print "Removing old file..."
+        os.remove(os.path.abspath(out_path))
     
     # open the output file
-    output_file = open(out_path, 'wb')
+    output_file = open(os.path.abspath(out_path), 'wb')
     
     # first, list the source files
     fpaths_src, fnames_src = utils.listFiles(directory=os.path.abspath(sources), ext='png')
@@ -265,8 +311,7 @@ def createDataset(sources,output,labels,sparse):
         print("Number of images in label map : %s"%str(len(label_map.keys())-1))
         print("Number of images in source dir: %s"%str(len(fpaths_src)))
         assert len(label_map.keys())-1 == len(fpaths_src)
-        
-      
+    
     n_imgs = len(fpaths_src)
     
     # parallel implementation (default, if joblib available)
