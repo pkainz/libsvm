@@ -349,8 +349,8 @@ def createDataset(sources,output,labels,sparse):
     feat_matrix = np.concatenate(all_features_list, axis=0).astype(np.float32)    
     
     # do feature scaling # TODO BUG in scaling
-    if False:
-    #if (args.scale == 1):
+    #if False:
+    if (args.scale == 1):
         # preserve the labels
         label_vec = feat_matrix[:,0]
         feat_matrix = np.delete(feat_matrix,0,1)
@@ -365,11 +365,13 @@ def createDataset(sources,output,labels,sparse):
             # standardize/normalize between 0 and 1
             #feat_vec_std = (feat_vec - np.min(feat_vec)) / (np.max(feat_vec) - np.min(feat_vec) + 1e-10)
              
+            #print feat_vec
+             
             # then linearly scale between -1 and 1 
-            #feat_vec_scale = 1.0*feat_vec_std * (1 - -1) - 1        
+            feat_vec_scale = 1.0*feat_vec * (1 - -1) - 1        
          
             # set column back to matrix
-            feat_matrix[:,feat_idx] = feat_vec
+            feat_matrix[:,feat_idx] = feat_vec_scale
         
         # finally add the label_vec again
         feat_matrix = np.concatenate((np.reshape(label_vec,(feat_matrix.shape[0],1)),feat_matrix), axis=1)
