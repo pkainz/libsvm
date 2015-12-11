@@ -209,5 +209,4 @@ def readLabelMap(filepath):
             key, value = line.split()
             label_map[key] = value
         
-    return label_map
-    
+    return label_map    

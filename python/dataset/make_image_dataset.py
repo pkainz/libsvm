@@ -210,10 +210,10 @@ def generateFeatures(src_image, label, knn=None):
         f_vec = getHistogramOfVisualWords(f_vec, knn)
     else:
         # flatten the array
-        f_vec = f_vec.flatten()
+        f_vec = np.reshape(f_vec, (1,f_vec.size))
     
     # prepend the label
-    f_vec = np.hstack((label, f_vec))
+    f_vec = np.insert(f_vec, 0, label)
     
     return f_vec
 
@@ -291,9 +291,16 @@ def processImage(fpaths_src, label_map, fnames_src, img_idx):
     counter+=1
 
     # return a nx128 or nxk matrix for the features of all modifications of this image
-    return np.concatenate(image_features, axis=0)
+    feat_matrix = np.asarray(image_features)
+    return feat_matrix
 
-
+def writeLine(row_idx, feat_matrix):
+        print('.'),
+        if (row_idx % 50) == 0:
+            print "%s rows done" % row_idx
+        # make the libsvm format
+        line = convert2libsvm(feat_matrix[row_idx, :])
+        return line + "\n"
 
 def createDataset(sources,output,labels,sparse):
     """
@@ -338,7 +345,8 @@ def createDataset(sources,output,labels,sparse):
     # parallel implementation (default, if joblib available)
     if has_joblib:
         image_features = Parallel(n_jobs=args.njobs,verbose=5) (delayed(processImage)(fpaths_src, label_map, fnames_src, img_idx) for img_idx in range(n_imgs))
-        #image_features = np.concatenate(image_features,axis=0)
+        # collect all images into a single matrix
+        image_features = np.concatenate(image_features, axis=0)
         all_features_list.append(image_features)
     else:
         for img_idx in xrange(n_imgs):
@@ -347,10 +355,12 @@ def createDataset(sources,output,labels,sparse):
     
     # make a 2D matrix from the list of features (stack all images vertically)
     feat_matrix = np.concatenate(all_features_list, axis=0).astype(np.float32)    
-    
-    # do feature scaling # TODO BUG in scaling
+      
+    # do feature scaling 
     #if False:
     if (args.scale == 1):
+        print "Scaling data..."
+        
         # preserve the labels
         label_vec = feat_matrix[:,0]
         feat_matrix = np.delete(feat_matrix,0,1)
@@ -375,18 +385,29 @@ def createDataset(sources,output,labels,sparse):
         
         # finally add the label_vec again
         feat_matrix = np.concatenate((np.reshape(label_vec,(feat_matrix.shape[0],1)),feat_matrix), axis=1)
-           
+        
+        print "Done."
     else:
         print "Data may not be properly scaled, use the 'svm-scale' implementation."
 
+
+    
+        
+    #Parallel(n_jobs=args.njobs, verbose=5)(delayed(function)(params) for i in range(10))
     # open the output file
     output_file = open(os.path.abspath(out_path), 'wb')
 
     # run through the feature matrix    
-    for row_idx in xrange(feat_matrix.shape[0]):
-        # make the libsvm format
-        line = convert2libsvm(feat_matrix[row_idx,:])
-        output_file.writelines(line + "\n")
+    print "Writing %s rows and %s cols to file..."%(feat_matrix.shape)
+    # parallel implementation (default, if joblib available)
+    if has_joblib:
+        lines = Parallel(n_jobs=args.njobs, verbose=5)(delayed(writeLine)(i, feat_matrix) for i in range(feat_matrix.shape[0]))
+        output_file.writelines(lines)   
+    else:
+        for i in xrange(feat_matrix.shape[0]):
+            line = writeLine(i, feat_matrix)
+            output_file.writelines(line)
+    
     output_file.close()
     
     return 0
