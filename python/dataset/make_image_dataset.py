@@ -21,6 +21,7 @@ Created on Nov 23, 2015
 
 import sys, os
 import multiprocessing
+from numpy import histogram
 prj_root = os.path.dirname(os.path.abspath(__file__))
 # add root directory to the python path
 sys.path.insert(0, prj_root + '/..')
@@ -30,6 +31,7 @@ import cv2
 from PIL import Image
 from common import utils
 import numpy as np
+import scipy.cluster.vq as vq
 import argparse
 try:
     from joblib import Parallel, delayed
@@ -58,8 +60,8 @@ def make_argument_parser():
                         help='Specifies a spatial normalization width and height for each image')
     parser.add_argument('--scale',
                         default=1,
-                        help='Specifies, whether to (i) normalize features to zero-mean and unit-variance,'
-                        + ' and then (ii) linearly scale all feature values between -1 and 1')
+                        help='Specifies, whether to (1) soft-normalize features to zero-mean and unit-variance,'
+                        + ' or (2) hard-normalize scale all feature values between -1 and 1.')
     parser.add_argument('--sparse',
                         default=1,
                         help='Specifies, whether to make sparse libsvm-format')
@@ -75,13 +77,23 @@ def make_argument_parser():
     parser.add_argument('--codebook',
                         default=None,
                         help='Specifies the bag of words codebook to be used in the quantization for dsift features')
+    parser.add_argument('--featurestats',
+                        default=None,
+                        help='Specifies a file which contains informations on how to scale the feature dimensions (either soft- or hard-normalization)'
+                        + 'which will be used for normalization')
+    parser.add_argument('--savefeaturestats',
+                        default=None,
+                        help='Specifies to save the feature statistics')
     parser.add_argument('--features',
                         default='dsift',
-                        help='Specifies a list of features to be concatenated. \n' 
+                        help='Specifies a comma-separated list of features to be concatenated. \n' 
                             #+ 'color: vectorized intensities (for either grey value image or color image)\n' 
                             + 'dsift: dense SIFT descriptor for all channels in the image\n')
     
     return parser
+
+def loadCodebook():
+    return np.loadtxt(args.codebook, delimiter=' ', dtype=np.float32)
 
 def getKNNClassifier():
     """
@@ -89,7 +101,7 @@ def getKNNClassifier():
     Compute the nearest neighbor out of 3 for a 'new_data' sample by calling 
         knn.find_nearest(new_data,3)
     """
-    codebook = np.loadtxt(args.codebook, delimiter=' ', dtype=np.float32)
+    codebook = loadCodebook()
     
     args.nVisualWords = codebook.shape[0]
     
@@ -155,7 +167,7 @@ def extractFeatures(image, feature_list):
 
 def convert2libsvm(f_vec):
     """
-    Create a sparse string representation of the feature vector.
+    Create a (sparse) string representation of the feature vector.
     """
     line = ''
     
@@ -163,7 +175,7 @@ def convert2libsvm(f_vec):
     
     # if you specified a positive label ID in your data for one-versus-all
     if not (args.ova == None):
-        line += '+1' if (str(label-1) == str(args.ova)) else '-1'
+        line += '1' if (str(label-1) == str(args.ova)) else '0'
     else:
         line += str(label)
    
@@ -173,7 +185,7 @@ def convert2libsvm(f_vec):
         if args.sparse == 1 and value == 0:
             continue
         else:
-            line += (' ' + str(feat_idx) + ':' + str(f_vec[feat_idx-1]))
+            line += (' ' + str(feat_idx-1) + ':' + str(f_vec[feat_idx-1]))
         
     return line
 
@@ -184,7 +196,7 @@ def getHistogramOfVisualWords(f_vec, knn):
     hist = np.zeros((1,args.nVisualWords)).flatten()
     
     print "Computing BoW histogram..."
-    ret, results, neighbours, dist = knn.find_nearest(f_vec.astype(np.float32), 3)
+    ret, results, neighbours, dist = knn.find_nearest(f_vec.astype(np.float32), 1)
 
     # count unique values
     y = np.bincount(results.astype(np.int64).flatten())
@@ -195,6 +207,8 @@ def getHistogramOfVisualWords(f_vec, knn):
     for tuple_ in tmp:
         hist[tuple_[0]] = tuple_[1]
     
+    # normalize the histogram between 0 and 1
+    hist /= np.sum(hist)
     return hist
 
 def generateFeatures(src_image, label, knn=None):
@@ -207,7 +221,19 @@ def generateFeatures(src_image, label, knn=None):
     
     # quantize, if codebook is present
     if not (knn == None):
-        f_vec = getHistogramOfVisualWords(f_vec, knn)
+        # implementation using opencv
+        f_vec1 = getHistogramOfVisualWords(f_vec, knn)
+        #print f_vec1[0]
+        
+#         # alternative implementation using scipy, results in the same numbers
+#         codebook = loadCodebook()
+#         codes,dist = vq.vq(f_vec, codebook)
+#         f_vec2, bin_edges = histogram(codes,
+#                                       bins=range(codebook.shape[0]+1),
+#                                       normed=True)
+#         print f_vec2[0]
+        
+        f_vec = f_vec1
     else:
         # flatten the array
         f_vec = np.reshape(f_vec, (1,f_vec.size))
@@ -356,43 +382,98 @@ def createDataset(sources,output,labels,sparse):
     # make a 2D matrix from the list of features (stack all images vertically)
     feat_matrix = np.concatenate(all_features_list, axis=0).astype(np.float32)    
       
-    # do feature scaling 
+    # do scaling of each feature dimension 
     #if False:
-    if (args.scale == 1):
+    if not (args.scale == 0):
         print "Scaling data..."
         
         # preserve the labels
         label_vec = feat_matrix[:,0]
         feat_matrix = np.delete(feat_matrix,0,1)
         
+        featurestats = np.zeros((2,feat_matrix.shape[1]))
+        
+        # use soft-normalization (zero-mean, unit var whitening)
+        if (args.scale == 1):
+            # if we specified featurestats from a training set, use them
+            if not (args.featurestats == None):
+                # load the statistics
+                featurestats = loadFeatureStats()
+                # featurestats contains 2 rows, first row = mean, second row = std
+                # and n feature dimensions
+                assert feat_matrix.shape[1]==featurestats.shape[1]
+            else:
+                pass
+            
+        
+        # use hard-normalization 
+        elif (args.scale == 2):
+            # if we specified featurestats from a training set, use them
+            if not (args.featurestats == None):
+                # load the statistics
+                featurestats = loadFeatureStats()
+                # the featurestats contains 2 rows, first row = min, second row = max 
+                # and n feature dimensions
+                assert feat_matrix.shape[1]==featurestats.shape[1]
+            else:
+                pass
+        
+        
+        # normalize each feature dimension
         for feat_idx in xrange(feat_matrix.shape[1]):
             feat_vec = feat_matrix[:,feat_idx]
+            
+            # soft-normalization (zero-mean, approx. unit variance)
+            if (args.scale == 1): 
+                # if feature statistics are specified
+                if not (args.featurestats == None):
+                    feat_mean = featurestats[0,feat_idx]
+                    feat_std = featurestats[1,feat_idx]
+                else:
+                    # compute them from the data
+                    feat_mean = feat_vec.mean()
+                    feat_std = (feat_vec.std() + 1e-10)
+                    # store them 
+                    featurestats[0,feat_idx] = feat_mean
+                    featurestats[1,feat_idx] = feat_std
+                
+                # shift to zero mean and (unit) variance
+                feat_vec_scaled = (feat_vec - feat_mean) / (1.*feat_std)
+                
+            
+            # hard-normalization (min/max = borders estimated from the (training) dataset)
+            elif (args.scale == 2):
+                if not (args.featurestats == None):
+                    feat_min = featurestats[0,feat_idx]
+                    feat_max = featurestats[1,feat_idx]
+                else:
+                    # compute them freshly
+                    feat_min = np.min(feat_vec)
+                    feat_max = np.max(feat_vec)
+                    # store them 
+                    featurestats[0,feat_idx] = feat_min
+                    featurestats[1,feat_idx] = feat_max
+                    
+                # standardize/normalize between 0 and 1
+                feat_vec_std = (feat_vec - feat_min) / (feat_max - feat_min + 1e-10)             
+                
+                # linearly scale between -1 and 1 
+                feat_vec_scaled = (1.0*feat_vec_std * (1 - -1)) - 1
              
-            # first shift to zero mean and unit variance
-            #feat_vec_zeromean = feat_vec - feat_vec.mean()
-            #feat_vec_unitvar = feat_vec_zeromean / (feat_vec.std() + 1e-10)
-         
-            # standardize/normalize between 0 and 1
-            #feat_vec_std = (feat_vec - np.min(feat_vec)) / (np.max(feat_vec) - np.min(feat_vec) + 1e-10)
-             
-            #print feat_vec
-             
-            # then linearly scale between -1 and 1 
-            feat_vec_scale = 1.0*feat_vec * (1 - -1) - 1        
-         
+                     
             # set column back to matrix
-            feat_matrix[:,feat_idx] = feat_vec_scale
+            feat_matrix[:,feat_idx] = feat_vec_scaled
         
-        # finally add the label_vec again
+        # finally prepend the label_vec again
         feat_matrix = np.concatenate((np.reshape(label_vec,(feat_matrix.shape[0],1)),feat_matrix), axis=1)
         
         print "Done."
     else:
-        print "Data may not be properly scaled, use the 'svm-scale' implementation."
+        print "Data may not be properly scaled, use the 'svm-scale' implementation of libsvm."
+ 
+    if not (args.savefeaturestats == None):
+        saveFeatureStats(featurestats)    
 
-
-    
-        
     #Parallel(n_jobs=args.njobs, verbose=5)(delayed(function)(params) for i in range(10))
     # open the output file
     output_file = open(os.path.abspath(out_path), 'wb')
@@ -411,6 +492,26 @@ def createDataset(sources,output,labels,sparse):
     output_file.close()
     
     return 0
+
+def saveFeatureStats(featurestats):
+    print 'Saving feature statistics to %s'%os.path.abspath(args.savefeaturestats)
+    # save the featurestats as numpy array to a file
+    np.savetxt(os.path.abspath(args.savefeaturestats),
+               featurestats,
+               delimiter=' ',
+               header=('Feature statistics for dataset %s\nargs.scale=%s\nnum_features=%s'%(args.output, 
+                                                                                             str(args.scale),
+                                                                                             str(featurestats.shape[1]))))
+    print 'Done.'
+
+def loadFeatureStats():
+    """
+    Load the feature statistics.
+    """
+    print 'Loading feature statistics...'
+    featurestats = np.loadtxt(os.path.abspath(args.featurestats), dtype=np.float32)
+    print 'Done.'
+    return featurestats
     
 if __name__ == "__main__":
     parser = make_argument_parser()
@@ -419,6 +520,9 @@ if __name__ == "__main__":
     args.augment = int(args.augment)
     args.njobs = int(args.njobs)
     args.scale = int(args.scale)
+    if args.scale not in range(3):
+        raise Exception("ERROR: Scale type unknown!")    
+    
     args.sparse = int(args.sparse)
     args.features = args.features.split(',')
 
