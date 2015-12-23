@@ -1,5 +1,5 @@
 CXX ?= g++
-CFLAGS = -Wall -Wconversion -O3 -fPIC -fopenmp -DDEBUG -g
+CFLAGS = -Wall -Wconversion -O3 -fPIC -fopenmp -lgomp -DDEBUG -g
 SHVER = 2
 OS = $(shell uname)
 
@@ -11,10 +11,10 @@ lib: svm.o
 	else \
 		SHARED_LIB_FLAG="-shared -Wl,-soname,libsvm.so.$(SHVER)"; \
 	fi; \
-	$(CXX) -lgomp $${SHARED_LIB_FLAG} svm.o -o libsvm.so.$(SHVER)
+	$(CXX) $(CFLAGS) $${SHARED_LIB_FLAG} svm.o -o libsvm.so.$(SHVER)
 
 svm-predict: svm-predict.c svm.o
-	$(CXX) $(CFLAGS) svm-predict.c svm.o -o svm-predict -lm
+	$(CXX) $(CFLAGS) svm-predict.c svm.o -o svm-predict -lm 
 svm-train: svm-train.c svm.o
 	$(CXX) $(CFLAGS) svm-train.c svm.o -o svm-train -lm
 svm-scale: svm-scale.c
