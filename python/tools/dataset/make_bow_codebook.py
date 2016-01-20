@@ -20,7 +20,7 @@ sys.path.insert(0, prj_root + '/..')
 import cv2
 
 from PIL import Image
-from common import utils
+from tools.common import utils
 import numpy as np
 import argparse
 try:
